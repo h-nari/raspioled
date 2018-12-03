@@ -59,19 +59,42 @@ I2Cの速度はkernelの設定で決まっているようなので、
     
 ## プロパティ
 
-**size**: oledの画面の幅と高さのタプル、すなわち `(128,64)` を返します。
+### **size**: 
+
+oledの画面の幅と高さのタプル、すなわち `(128,64)` を返します。
 
 ## メソッド
 
-**begin(dev="/dev/i2c-1", i2c_addr=0x3c)**:
+### **begin(dev="/dev/i2c-1", i2c_addr=0x3c)**
 
-**end**:
+i2cデバイスファイルを開け、描画用サブスレッドを開始します。
 
-**clear**:
+### **end()**
 
-**image_byte**:
+サブスレッドを終了し、i2cデバイスをクローズします。
 
-**vsync**:
+**clear(sync=0,timeout=0.5)**
+
+描画バッファをクリアし、oledに転送することで、表示を消去します。
+sync=1とすることで、 転送の終了を待ちます。
+デフォルトのsync=0だと、転送の終了を待たずバッファクリア後すぐに
+戻ります。 timeoutで転送の終了を待つ最大時間を指定できます。
+単位は病です。　timeoutが発生すると Python3では TIMEOUT例外、
+Python2では rapioled.error 例外が発生します。
+
+**image_bytes(bytes,sync=0,timeout=0.5)**
+
+Pillowのimageオブジェクトの tobytes()の結果を渡し、
+Oledの描画バッファ形式に変換後、Oledに転送します。
+
+sync, timeout引数は clearメソッドと同じです。
+
+**vsync(timeout=0.5)**
+
+clear, image_bytes メソッド後のoledへのデータのデータ転送を待ちます。  
+データ転送が行わなれていなければ、すぐに帰ります。  
+timeoutは clearコマンドと同じです。
+
 
 
     
