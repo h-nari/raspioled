@@ -26,8 +26,8 @@ static int updating;
 
 static pthread_t thread_id;
 static int thread_quit;
-static int thread_buf_modified;
-static pthread_mutex_t mutex_modified;
+static int buf_modified;
+static pthread_mutex_t mutex_updating;
 static pthread_cond_t  cond_modified;
 static pthread_mutex_t mutex_disp_done;
 static pthread_cond_t  cond_disp_done;
@@ -139,28 +139,34 @@ static int oled_i2c_display(void)
 void *oled_display_thread(void *user_data)
 {
   while(1){
-    pthread_mutex_lock(&mutex_modified);
-    pthread_cond_wait(&cond_modified, &mutex_modified);
-    pthread_mutex_unlock(&mutex_modified);
+    if(thread_quit)
+      break;
+    pthread_mutex_lock(&mutex_updating);
+    updating = 0;
+    pthread_cond_broadcast(&cond_disp_done);
+    if(!buf_modified)
+      pthread_cond_wait(&cond_modified, &mutex_updating);
+    updating = 1;
+    pthread_mutex_unlock(&mutex_updating);
 
-    if(thread_quit) break;
-    if(thread_buf_modified){
-      updating = 1;
-      thread_buf_modified = 0;
+    if(buf_modified){
+      buf_modified = 0;
       oled_i2c_display();
-      updating = 0;
-      pthread_cond_broadcast(&cond_disp_done); 
     }
   }
+  pthread_mutex_unlock(&mutex_updating);
   return NULL;
 }
 
 static int  wait_update(float timeout_sec)
 {
-  if(thread_buf_modified || updating){
+  pthread_mutex_lock(&mutex_updating);
+  if(updating){
     int err;
     unsigned int ms; 
     struct timespec t,abstime;
+
+    pthread_mutex_unlock(&mutex_updating);
 
     clock_gettime(CLOCK_REALTIME, &t);
     ms = t.tv_nsec / 1000000 + timeout_sec * 1000;
@@ -172,15 +178,18 @@ static int  wait_update(float timeout_sec)
     err = pthread_cond_timedwait(&cond_disp_done,&mutex_disp_done,&abstime);
     Py_END_ALLOW_THREADS;
     pthread_mutex_unlock(&mutex_disp_done);
+
     if(err == ETIMEDOUT){
 #if PY_MAJOR_VERSION >= 3
-      PyErr_Format(PyExc_TimeoutError,"vsync timeout");
+      return (int)PyErr_Format(PyExc_TimeoutError,"vsync timeout");
 #else
-      PyErr_Format(OledErr,"vsync timeout");
+      return (int)PyErr_Format(OledErr,"vsync timeout");
 #endif
-      return 0;
     }
+  } else {
+    pthread_mutex_unlock(&mutex_updating);
   }
+    
   return 1;
 }
   
@@ -198,10 +207,8 @@ oled_begin_method(PyObject *self, PyObject *args, PyObject *keywds)
 
   disp_buf_size = SSD1306_WIDTH * SSD1306_HEIGHT / 8;
   disp_buf = PyMem_Malloc(disp_buf_size + 4);
-  if(!disp_buf){
-    PyErr_Format(OledErr,"malloc %d byte failed", disp_buf_size + 4);
-    return NULL;
-  }
+  if(!disp_buf)
+    return PyErr_Format(OledErr,"malloc %d byte failed", disp_buf_size + 4);
   disp_buf += 4;
   memset(disp_buf, 0, disp_buf_size);
   
@@ -217,40 +224,45 @@ oled_begin_method(PyObject *self, PyObject *args, PyObject *keywds)
 
   // thread初期化
   
-  if(pthread_mutex_init(&mutex_modified, NULL) ||
+  if(pthread_mutex_init(&mutex_updating, NULL) ||
      pthread_mutex_init(&mutex_disp_done, NULL) ||
      pthread_cond_init(&cond_modified, NULL) ||
      pthread_cond_init(&cond_disp_done, NULL)){
-    PyErr_Format(OledErr,"init cond/mutex  failed");
-    return 0;
+    return PyErr_Format(OledErr,"init cond/mutex  failed");
   }
-  thread_buf_modified = thread_quit = 0;
+  buf_modified = thread_quit = 0;
 
   // thread起動
   
   if(pthread_create(&thread_id, NULL, oled_display_thread, NULL)){
-    PyErr_Format(OledErr,"pthread_create failed");
-    return 0;
+    return PyErr_Format(OledErr,"pthread_create failed");
   }
   
   Py_RETURN_NONE;
 }
 
 static PyObject *
-oled_end_method(PyObject *self, PyObject *args)
+oled_end_method(PyObject *self, PyObject *args, PyObject *keywds)
 {
-  if(!PyArg_ParseTuple(args, ""))
+  float timeout = DEFAULT_TIMEOUT;
+  static char *kwlist[] = {"timeout",NULL};
+  
+  if(!PyArg_ParseTupleAndKeywords(args, keywds, "|f", kwlist, &timeout))
     return NULL;
   
   // 後処理
 
-  thread_quit = 1;
-  pthread_cond_broadcast(&cond_modified);
-  pthread_join(thread_id, NULL);
-  
-  if(!oled_i2c_close())
+  if(!wait_update(timeout))
     return NULL;
   
+  pthread_mutex_lock(&mutex_updating);
+  thread_quit = 1;
+  pthread_cond_broadcast(&cond_modified);
+  pthread_mutex_unlock(&mutex_updating);
+  pthread_join(thread_id, NULL);
+
+  if(!oled_i2c_close())
+    return NULL;
   Py_RETURN_NONE;
 }
 
@@ -265,8 +277,10 @@ oled_clear_method(PyObject *self, PyObject *args, PyObject *keywds)
     return NULL;
 
   memset(disp_buf, 0, disp_buf_size);
-  thread_buf_modified = 1;
-  pthread_cond_broadcast(&cond_modified);
+  buf_modified = 1;
+  if(pthread_cond_broadcast(&cond_modified))
+    return PyErr_Format(OledErr,"(%s:%d) pthread_cond_broadcast failed",
+                      __FILE__,__LINE__);
 
   if(sync){
     if(!wait_update(timeout))
@@ -291,11 +305,9 @@ oled_image_bytes_method(PyObject *self, PyObject *args, PyObject *keywds)
                                   &PyBytes_Type, &bytes, &sync, &timeout))
     return NULL;
 
-  if(PyBytes_Size(bytes) != disp_buf_size){
-    PyErr_Format(OledErr,"bad length %u, should be %d",
-                 PyBytes_Size(bytes),disp_buf_size);
-    return NULL;
-  }
+  if(PyBytes_Size(bytes) != disp_buf_size)
+    return PyErr_Format(OledErr,"bad length %u, should be %d",
+                      PyBytes_Size(bytes),disp_buf_size);
   char *b = PyBytes_AsString(bytes);
   if(!b) return NULL;
 
@@ -314,8 +326,10 @@ oled_image_bytes_method(PyObject *self, PyObject *args, PyObject *keywds)
     }
   }
 
-  thread_buf_modified = 1;
-  pthread_cond_broadcast(&cond_modified);
+  buf_modified = 1;
+  if(pthread_cond_broadcast(&cond_modified))
+    return PyErr_Format(OledErr,"(%s:%d)pthread_cond_broadcast failed",
+                      __FILE__,__LINE__);
 
   if(sync){
     if(!wait_update(timeout))
@@ -340,8 +354,8 @@ oled_vsync_method(PyObject *self, PyObject *args, PyObject *keywds)
 static PyMethodDef OledMethods[] = {
   {"begin",  (PyCFunction)oled_begin_method,
    METH_VARARGS|METH_KEYWORDS,   "begin oled display"},
-  {"end",    oled_end_method,   METH_VARARGS,
-   "end oled display"},
+  {"end",    (PyCFunction)oled_end_method,
+   METH_VARARGS|METH_KEYWORDS,   "end oled display"},
   {"clear",  (PyCFunction)oled_clear_method,
    METH_VARARGS|METH_KEYWORDS,  "clear display"},
   {"image_bytes",  (PyCFunction)oled_image_bytes_method,
