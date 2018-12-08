@@ -24,7 +24,7 @@ for i in range(50):
     x2 = random.randrange(w)
     y2 = random.randrange(h)
     draw.line([x1,y1,x2,y2],fill= 1)
-    oled.image_bytes(image.tobytes())
+    oled.image(image)
 print("done")
 oled.end()
 

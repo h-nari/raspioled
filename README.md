@@ -73,26 +73,47 @@ i2cデバイスファイルを開け、描画用サブスレッドを開始し�
 
 サブスレッドを終了し、i2cデバイスをクローズします。
 
-**clear(sync=0,timeout=0.5)**
+**clear(update=1,sync=0,timeout=0.5,fill=0,area=(0,0,128,64))**
 
-描画バッファをクリアし、oledに転送することで、表示を消去します。
+描画バッファをクリアします。
+
+fillで塗りつぶす色(0:黒、1:白)を指定できます。
+
+areaを指定してクリアする領域を指定できます。
+指定の仕方は(x,y,w,h)または((x,y),(w,h))です。
+
+update=1であれば、クリア後すぐにoledに転送します。
+
 sync=1とすることで、 転送の終了を待ちます。
 デフォルトのsync=0だと、転送の終了を待たずバッファクリア後すぐに
-戻ります。 timeoutで転送の終了を待つ最大時間を指定できます。
-単位は病です。　timeoutが発生すると Python3では TIMEOUT例外、
+戻ります。
+
+timeoutで転送の終了を待つ最大時間を指定できます。
+単位は秒です。timeoutが発生すると Python3では TIMEOUT例外、
 Python2では rapioled.error 例外が発生します。
 
-**image_bytes(bytes,sync=0,timeout=0.5)**
+**image(image,dst_area=NULL,src_area=NULL,update=1,sync=0,timeout=0.5)**
 
-Pillowのimageオブジェクトの tobytes()の結果を渡し、
-Oledの描画バッファ形式に変換後、Oledに転送します。
+Pillowのimageオブジェクトを渡し、
+Oledの描画バッファに書き込みます。
 
-sync, timeout引数は clearメソッドと同じです。
+imageはPillowのImageオブジェクトです。
+形式はビットマップ、すなわちmodeは'1'でなくてはいけません。
+
+dst_areaでoled側の書き込む領域,
+src_areaでイメージ側読み出し領域を
+を指定できます。
+指定しない場合、それぞれ全領域が対象となります。
+
+領域の指定の方法は (x,y), (x,y,w,h), ((x,y),(w,h))のいずれかです。
+wとhが指定されない場合、可能な最大幅が指定されたものとされます。
+
+update,sync, timeout引数は clearメソッドと同じです。
 
 **vsync(timeout=0.5)**
 
 clear, image_bytes メソッド後のoledへのデータのデータ転送を待ちます。  
-データ転送が行わなれていなければ、すぐに帰ります。  
+データ転送が行わなれていなければ、すぐに返ります。  
 timeoutは clearコマンドと同じです。
 
 

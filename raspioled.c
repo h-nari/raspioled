@@ -192,6 +192,36 @@ static int  wait_update(float timeout_sec)
     
   return 1;
 }
+
+
+static void write_image_to_buf(const char *b,  // image.tobytes()
+                               int image_w,
+                               int w, int h,
+                               int src_x, int src_y,
+                               int dst_x, int dst_y)
+{
+  int src_bpl = (image_w +7)/8;
+  int dst_bpl = SSD1306_WIDTH;
+  for(int iy=0; iy<h; iy++){
+    int yd = dst_y + iy;
+    int ys = src_y + iy;
+    uint8_t wmask = 1 << (yd & 7);
+    const char *p = b + ys * src_bpl + src_x;
+    uint8_t *q = disp_buf + yd / 8*dst_bpl + dst_x;
+    for(int ix=0;ix<w;ix++){
+      int xs = src_x + ix;
+      uint8_t rmask = 0x80 >> (xs & 7);
+      if(p[xs/8] & rmask){
+        *q |= wmask;
+      } else {
+        *q &= ~wmask;
+      }
+      q++;
+    }
+  }
+}
+
+
   
 static PyObject *
 oled_begin_method(PyObject *self, PyObject *args, PyObject *keywds)
@@ -269,27 +299,173 @@ oled_end_method(PyObject *self, PyObject *args, PyObject *keywds)
 static PyObject *
 oled_clear_method(PyObject *self, PyObject *args, PyObject *keywds)
 {
+  int update = 1;
   int sync = 0;
   float timeout = DEFAULT_TIMEOUT;
-  static char *kwlist[] = {"sync","timeout",NULL};
-  
-  if(!PyArg_ParseTupleAndKeywords(args, keywds,"|if",kwlist, &sync, &timeout))
+  int fill = 0;
+  PyObject *area=NULL;
+  static char *kwlist[] = {"update","sync","timeout","fill","area",NULL};
+  if(!PyArg_ParseTupleAndKeywords(args, keywds,"|iifiO",kwlist,
+                                  &update,&sync, &timeout, &fill, &area))
     return NULL;
 
-  memset(disp_buf, 0, disp_buf_size);
-  buf_modified = 1;
-  if(pthread_cond_broadcast(&cond_modified))
-    return PyErr_Format(OledErr,"(%s:%d) pthread_cond_broadcast failed",
-                      __FILE__,__LINE__);
-
-  if(sync){
-    if(!wait_update(timeout))
-      return NULL;
+  if(!area){
+    memset(disp_buf, fill ? 0xff: 0x00, disp_buf_size);
+  } else {
+    int dx,dy,dw,dh;
+    int w = SSD1306_WIDTH;
+    int h = SSD1306_HEIGHT;
+    if(!PyArg_ParseTuple(area,"iiii",&dx,&dy,&dw,&dh)){
+      PyErr_Clear();
+      if(!PyArg_ParseTuple(area,"(ii)(ii)",&dx,&dy,&dw,&dh))
+        return PyErr_Format(OledErr,"area must be (x,y,w,h) or((x,y),(w,h))");
+    }
+    if(dx < 0) { dw += dx; dx = 0; }
+    if(dy < 0) { dh += dy; dy = 0; }
+    if(dx + dw > w) dw = w - dx;
+    if(dy + dh > h) dh = h - dy;
+    if(dw <= 0 || dh <= 0) goto end;
+    for(int y=dy; y<dy+dh; y++){
+      uint8_t *q = disp_buf + (y/8) * w + dx;
+      uint8_t wmask = 1 << (y & 7);
+      for(int x=dx; x<dx+dw; x++){
+        if(fill)
+          *q++ |= wmask;
+        else
+          *q++ &= ~wmask;
+      }
+    }
   }
-  
+
+  if(update){
+    buf_modified = 1;
+    pthread_cond_broadcast(&cond_modified);
+    if(sync){
+      if(!wait_update(timeout))
+        return NULL;
+    }
+  }
+  end:
   Py_RETURN_NONE;
 }
 
+
+static PyObject *
+oled_image_method(PyObject *self, PyObject *args, PyObject *keywds)
+{
+  static char *kwlist[] = {"image","dst_area","src_area",
+                           "update","sync","timeout",
+                           NULL};
+  PyObject *image;
+  PyObject *dst_area = NULL;
+  PyObject *src_area = NULL;
+  int update = 1;
+  int sync = 0;
+  float timeout = DEFAULT_TIMEOUT;
+  int w = SSD1306_WIDTH;
+  int h = SSD1306_HEIGHT;
+  int dst_x=0, dst_y=0, dst_w=w, dst_h=h;
+  int src_x=0, src_y=0, src_w, src_h;
+
+  if(!PyArg_ParseTupleAndKeywords(args, keywds,"O|OOiif",kwlist,
+                                  &image, &dst_area, &src_area,
+                                  &update, &sync, &timeout))
+    return NULL;
+
+  // image.__class__.__name__ == "image"
+  PyObject *class = PyObject_GetAttrString(image,"__class__");
+  if(!class) return NULL;
+  PyObject *name  = PyObject_GetAttrString(class,"__name__");
+  if(!name) return NULL;
+#if  PY_MAJOR_VERSION >= 3
+  char *name_str = PyUnicode_AsUTF8(name);
+#else
+  char *name_str = PyString_AsString(name);
+#endif
+  if(!name_str) return NULL;
+  if(strcmp(name_str,"Image")!=0)
+    return PyErr_Format(OledErr,"Image class expected, %s found", name_str);
+
+  // image.mode == '1'
+
+  PyObject *mode = PyObject_GetAttrString(image,"mode");
+  if(!mode) return NULL;
+#if  PY_MAJOR_VERSION >= 3
+  char *mode_str = PyUnicode_AsUTF8(mode);
+#else
+  char *mode_str = PyString_AsString(mode);
+#endif
+  if(strcmp(mode_str,"1") != 0)
+    return PyErr_Format(OledErr,"image.mode must be 1, not %s",mode_str);
+  
+  // image.bytes()
+  PyObject *tobytes = PyObject_GetAttrString(image,"tobytes");
+  if(!tobytes) return NULL;
+  PyObject *bytes = PyObject_CallObject(tobytes,NULL);
+  if(!bytes) return NULL;
+  char *b = PyBytes_AsString(bytes);
+  if(!b) return NULL;
+
+  // image.size
+  PyObject *size = PyObject_GetAttrString(image,"size");
+  if(!size) return NULL;
+
+  int image_w, image_h;
+  if(!PyArg_ParseTuple(size,"ii", &image_w, &image_h))
+    return NULL;
+  src_w = image_w;
+  src_h = image_h;
+
+  // parse dst_area
+  if(dst_area){
+    if(!PyArg_ParseTuple(dst_area,"ii|ii", &dst_x, &dst_y, &dst_w, &dst_h) &&
+       !PyArg_ParseTuple(dst_area,"(ii)(ii)", &dst_x, &dst_y, &dst_w, &dst_h))
+      return PyErr_Format(OledErr,
+                          "dst_area must be (x,y),(x,y,w,h)or((x,y),(w,h))");
+  }
+  if(dst_x >= w || dst_y >= h || dst_w <= 0 || dst_h <= 0)    goto end;
+  if(dst_x < 0){ dst_w += dst_x; dst_x = 0;}
+  if(dst_y < 0){ dst_h += dst_y; dst_y = 0;}
+  if(dst_x + dst_w > w) dst_w = w - dst_x;
+  if(dst_y + dst_h > h) dst_h = h - dst_y;
+  
+  // parse src_area
+  if(src_area){
+    if(!PyArg_ParseTuple(src_area,"ii|ii",&src_x,&src_y,&src_w,&src_h) &&
+       !PyArg_ParseTuple(src_area,"(ii)(ii)",&src_x,&src_y,&src_w,&src_h))
+      return PyErr_Format(OledErr,
+                          "src_area must be (x,y),(x,y,w,h)or((x,y),(w,h))");
+  }
+
+  if(src_x >= image_w || src_y >= image_h || src_w <= 0 || src_h <= 0)
+    goto end;
+  if(src_x < 0){ src_w += src_x; src_x = 0;}
+  if(src_y < 0){ src_h += src_y; src_y = 0;}
+  if(src_x + src_w > image_w) src_w = image_w - src_x;
+  if(src_y + src_h > image_h) src_h = image_h - src_y;
+
+  int ww = src_w < dst_w ? src_w : dst_w;
+  int hh = src_h < dst_h ? src_h : dst_h;
+  
+  // write to buf
+  
+  write_image_to_buf(b, image_w, ww, hh, src_x, src_y, dst_x, dst_y);
+
+  if(update){
+    buf_modified = 1;
+    pthread_cond_broadcast(&cond_modified); // signal to write_thread
+
+    if(sync){
+      if(!wait_update(timeout))
+        return NULL;
+    }
+  }
+  
+ end:  
+  Py_RETURN_NONE;
+}  
+
+    
 
 static PyObject *
 oled_image_bytes_method(PyObject *self, PyObject *args, PyObject *keywds)
@@ -307,7 +483,7 @@ oled_image_bytes_method(PyObject *self, PyObject *args, PyObject *keywds)
 
   if(PyBytes_Size(bytes) != disp_buf_size)
     return PyErr_Format(OledErr,"bad length %u, should be %d",
-                      PyBytes_Size(bytes),disp_buf_size);
+                        PyBytes_Size(bytes),disp_buf_size);
   char *b = PyBytes_AsString(bytes);
   if(!b) return NULL;
 
@@ -358,6 +534,8 @@ static PyMethodDef OledMethods[] = {
    METH_VARARGS|METH_KEYWORDS,   "end oled display"},
   {"clear",  (PyCFunction)oled_clear_method,
    METH_VARARGS|METH_KEYWORDS,  "clear display"},
+  {"image",  (PyCFunction)oled_image_method,
+   METH_VARARGS|METH_KEYWORDS, "display PILLOW image"},
   {"image_bytes",  (PyCFunction)oled_image_bytes_method,
    METH_VARARGS|METH_KEYWORDS, "display PILLOW image"},
   {"vsync", (PyCFunction)oled_vsync_method,
