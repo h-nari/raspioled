@@ -202,11 +202,12 @@ static void write_image_to_buf(const char *b,  // image.tobytes()
 {
   int src_bpl = (image_w +7)/8;
   int dst_bpl = SSD1306_WIDTH;
+
   for(int iy=0; iy<h; iy++){
     int yd = dst_y + iy;
     int ys = src_y + iy;
     uint8_t wmask = 1 << (yd & 7);
-    const char *p = b + ys * src_bpl + src_x;
+    const char *p = b + ys * src_bpl;
     uint8_t *q = disp_buf + yd / 8*dst_bpl + dst_x;
     for(int ix=0;ix<w;ix++){
       int xs = src_x + ix;
@@ -221,6 +222,88 @@ static void write_image_to_buf(const char *b,  // image.tobytes()
   }
 }
 
+static void oled_shift_left(int x0,int y0,int x1,int y1, int shift, int fill)
+{
+  int w = SSD1306_WIDTH;
+  uint8_t *b = disp_buf;
+  int i;
+
+  for(int r = y0 /8; r*8 < y1; r++){
+    uint8_t mask;
+    if(r * 8 < y0)
+      mask = 0xff << (y0 - r * 8);
+    else
+      mask = 0xff;
+    if((r+1)*8 > y1)
+      mask &= 0xff >> ((r+1)*8 - y1);
+
+    if(shift > 0){
+      for(i=x0; i< x1-shift;i++)
+        b[w*r+i] = (b[w*r+i] & ~mask)|(b[w*r+i+shift] &mask);
+      for(;i < x1;i++)
+        b[w*r+i] = (b[w*r+i] & ~mask)|(fill ? mask : 0);
+    }
+    else if(shift < 0){
+      for(i=x1-1;i>=x0-shift; i--)
+        b[w*r+i]=(b[w*r+i] & ~mask)|(b[w*r+i+shift] & mask);
+      for(;i>=x0; i--)
+        b[w*r+i]=(b[w*r+i] & ~mask)|(fill ? mask : 0);
+    }
+  }
+}
+
+static uint8_t get_8bit_vertically(int x, int y)
+{
+  int r = y < 0 ? y/8-1 : y / 8;
+  uint8_t b0 = r     < 0 ? 0 : disp_buf[r*SSD1306_WIDTH + x];
+  uint8_t b1 = r + 1 < 0 ? 0 : disp_buf[(r+1)*SSD1306_WIDTH + x];
+  uint16_t w = b0 | (b1 << 8);
+
+  return (uint8_t)(w >> (y & 7));
+}
+
+static void oled_shift_down(int x0, int y0, int x1, int y1,
+                            int shift, int fill)
+{
+  int w = SSD1306_WIDTH;
+  uint8_t *b = disp_buf,mask;
+  int r;
+
+  for(int x=x0; x<x1; x++){
+    if(shift > 0){
+      for(r=(y1-1)/8; r*8+8 > y0+shift; r--){
+        mask = 0xff;
+        if(r * 8 < y0 + shift) mask  = 0xff << (y0 + shift - r * 8);
+        if((r+1)*8 > y1)       mask &= 0xff >> ((r+1)*8 - y1);
+        b[r*w+x] = (b[r*w+x]&~mask)|(get_8bit_vertically(x,r*8-shift) & mask);
+      }
+      for(r = (y0+shift)/8; r*8 >= y0; r--){
+        mask = 0xff;
+        if(r * 8 < y0)             mask  = 0xff << (y0 - r * 8);
+        if((r + 1)*8 > y0 + shift) mask &= 0xff >> ((r+1)*8 - y0 - shift);
+        if(fill) b[r*w+x] |= mask;
+        else     b[r*w+x] &= ~mask;
+      }
+    }
+    if(shift < 0){
+      for(r=y0/8; r*8+8 < y1-shift; r++){
+        mask = 0xff;
+        if(r * 8 < y0)     mask = 0xff << (y0 - r * 8);
+        if(r * 8 + 8 > y1) mask &= 0xff >> (r * 8 + 8 - y1);
+        b[r*w+x] = (b[r*w+x]&~mask)|(get_8bit_vertically(x,r*8-shift)&mask);
+      }
+      for(r=(y1+shift)/8; r*8 < y1; r++){
+        mask = 0xff;
+        if(r*8 < y1+shift) mask  = 0xff << (y1+shift - r*8);
+        if(r*8+8 > y1)     mask &= 0xff >> (r*8+8-y1);
+        if(fill)
+          b[r*w+x] |=  mask;
+        else
+          b[r*w+x] &= ~mask;
+      }
+    }
+  }
+}
 
   
 static PyObject *
@@ -446,7 +529,7 @@ oled_image_method(PyObject *self, PyObject *args, PyObject *keywds)
 
   int ww = src_w < dst_w ? src_w : dst_w;
   int hh = src_h < dst_h ? src_h : dst_h;
-  
+
   // write to buf
   
   write_image_to_buf(b, image_w, ww, hh, src_x, src_y, dst_x, dst_y);
@@ -463,55 +546,57 @@ oled_image_method(PyObject *self, PyObject *args, PyObject *keywds)
   
  end:  
   Py_RETURN_NONE;
-}  
-
-    
+}
 
 static PyObject *
-oled_image_bytes_method(PyObject *self, PyObject *args, PyObject *keywds)
+oled_shift_method(PyObject *self, PyObject *args, PyObject *keywds)
 {
-  PyObject *bytes;
-  int w = SSD1306_WIDTH;
-  int h = SSD1306_HEIGHT;
+  static char *kwlist[] = {"amount","area","fill","update","sync","timeout",
+                           NULL};
+  PyObject *amount = NULL;
+  PyObject *area = NULL;
+  int fill = 0;
+  int update = 1;
   int sync = 0;
   float timeout = DEFAULT_TIMEOUT;
-  static char *kwlist[] = {"bytes","sync","timeout",NULL};
+  int sx = -1;
+  int sy = 0;
+  int x = 0;
+  int y = 0;
+  int w = SSD1306_WIDTH;
+  int h = SSD1306_HEIGHT;
 
-  if(!PyArg_ParseTupleAndKeywords(args, keywds,"O!|if",kwlist,
-                                  &PyBytes_Type, &bytes, &sync, &timeout))
+  if(!PyArg_ParseTupleAndKeywords(args, keywds,"|O!O!iiif",kwlist,
+                                  &PyTuple_Type, &amount,
+                                  &PyTuple_Type, &area,
+                                  &fill, &update, &sync, &timeout))
     return NULL;
 
-  if(PyBytes_Size(bytes) != disp_buf_size)
-    return PyErr_Format(OledErr,"bad length %u, should be %d",
-                        PyBytes_Size(bytes),disp_buf_size);
-  char *b = PyBytes_AsString(bytes);
-  if(!b) return NULL;
+  if(amount){
+    if(!PyArg_ParseTuple(amount, "ii", &sx, &sy))
+      return NULL;
+  }
 
-  for(int y=0; y<h; y++){
-    uint8_t wmask = 1 << (y & 7);
-    char *p = b + y * w / 8;
-    uint8_t *q = disp_buf + (y/8)*w;
-    for(int x=0;x<w;x++){
-      uint8_t rmask = 0x80 >> (x & 7);
-      if(p[x/8] & rmask){
-        *q |= wmask;
-      } else {
-        *q &= ~wmask;
-      }
-      q++;
+  if(area){
+    if(!PyArg_ParseTuple(area,"iiii", &x,&y,&w,&h)){
+      PyErr_Clear();
+      if(!PyArg_ParseTuple(area,"(ii)(ii)",&x,&y,&w,&h))
+        return PyErr_Format(OledErr,
+                            "area must be (x,y,w,h)or((x,y),(w,h))");
     }
   }
 
-  buf_modified = 1;
-  if(pthread_cond_broadcast(&cond_modified))
-    return PyErr_Format(OledErr,"(%s:%d)pthread_cond_broadcast failed",
-                      __FILE__,__LINE__);
-
-  if(sync){
-    if(!wait_update(timeout))
-      return NULL;
-  }
+  if(sx != 0) oled_shift_left(x, y, x+w, y+h, -sx, fill);
+  if(sy != 0) oled_shift_down(x, y, x+w, y+h, sy, fill);
   
+  if(update && (sx !=0 || sy != 0)){
+    buf_modified = 1;
+    pthread_cond_broadcast(&cond_modified); // signal to write_thread
+    if(sync){
+      if(!wait_update(timeout))
+        return NULL;
+    }
+  }
   Py_RETURN_NONE;
 }
 
@@ -536,8 +621,8 @@ static PyMethodDef OledMethods[] = {
    METH_VARARGS|METH_KEYWORDS,  "clear display"},
   {"image",  (PyCFunction)oled_image_method,
    METH_VARARGS|METH_KEYWORDS, "display PILLOW image"},
-  {"image_bytes",  (PyCFunction)oled_image_bytes_method,
-   METH_VARARGS|METH_KEYWORDS, "display PILLOW image"},
+  {"shift",  (PyCFunction)oled_shift_method,
+   METH_VARARGS|METH_KEYWORDS, "shift"},
   {"vsync", (PyCFunction)oled_vsync_method,
    METH_VARARGS|METH_KEYWORDS, "wait oled display updated"},
   { NULL, NULL, 0, NULL}
