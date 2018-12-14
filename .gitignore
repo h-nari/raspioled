@@ -1,4 +1,5 @@
 Makefile
 test.py
 build
+__pycache__
 ,*

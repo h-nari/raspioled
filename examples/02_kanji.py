@@ -1,7 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 
-import raspioled as oled;
+import RaspiOled.oled as oled;
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageFont

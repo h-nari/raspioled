@@ -1,6 +1,6 @@
 #!/usr/bin/python
 
-import raspioled as oled;
+import RaspiOled.oled as oled;
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageFont

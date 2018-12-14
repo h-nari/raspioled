@@ -1,19 +1,19 @@
 #!/usr/bin/python3
 import time
-import raspioled as oled;
+import RaspiOled.oled as oled;
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageFont
 
-class ScrollText:
+class new:
 
     def __init__(self):
         self.dot_per_second = 128.0
         self.area = ((0,0), oled.size)
         self.text = ""
-        self.font = ImageFont.truetype(
-            font='/usr/share/fonts/trutype/noto/NotoMono-Regular.ttf',
-            size=32);
+        self.font_size = 16
+        self.font_path = '/usr/share/fonts/trutype/noto/NotoMono-Regular.ttf'
+        self.font=ImageFont.truetype(font=self.font_path,size=self.font_size);
         self.image = Image.new('1',(64,64)) 
         self.draw  = ImageDraw.Draw(self.image)
         self.tw = self.tx = 0
@@ -23,17 +23,31 @@ class ScrollText:
     def add_text(self, text):
         self.text += text
 
-    def update(self):
+    def set_font(self, path, size=-1):
+        self.font_path = path;
+        if(size >= 0):
+            self.font_size = size
+        self.font=ImageFont.truetype(font=self.font_path,size=self.font_size);
 
+    def set_font_size(self, size):
+        self.font_size = size;
+        self.font=ImageFont.truetype(font=self.font_path,size=self.font_size);
+
+    def set_speed(self, dps):
+        self.dot_per_second = dps;
+
+    def update(self):
         if self.getCharImage():
+            ((x,y),(w,h)) = self.area
             left = self.calcShift()
+            oled.shift(area=self.area, amount=(-left,0),fill=0)
+            wx = x + w - left
             while left > 0:
-                ((x,y),(w,h)) = self.area
-                oled.shift(area=self.area, amount=(-left,0),fill=0)
                 ww = min(left, self.tw - self.tx)
                 oled.image(self.image,
-                           dst_area=(x+w-ww,y,ww,self.th),
+                           dst_area=(wx,y,ww,self.th),
                            src_area=(self.tx,0,ww,self.th))
+                wx += ww
                 left -= ww
                 self.tx += ww
                 if not self.getCharImage():
@@ -49,7 +63,6 @@ class ScrollText:
             self.time_set = 0
             return 0
             
-
     def getCharImage(self):
         if self.tx >= self.tw:
             if len(self.text) > 0:
@@ -74,24 +87,9 @@ class ScrollText:
         if(not self.time_set):
             self.time = time.time()
             self.time_set = 1
-            return 1
+            return 0
         else:
             dot = int((time.time() - self.time) * self.dot_per_second);
             self.time += dot / self.dot_per_second
             return dot
         
-if __name__ == "__main__":
-    oled.begin()
-    sc = ScrollText()
-    sc.add_text("Hello")
-    while sc.update():
-        time.sleep(0.001)
-    sc.add_text(" World")
-    while sc.update():
-        time.sleep(0.001)
-    sc.scrollOut()    
-    while sc.update():
-        time.sleep(0.001)
-    
-    print("main done");
-                     

@@ -18,6 +18,7 @@
 
 static PyObject *OledErr;
 
+static int oled_opened; 
 static int fd = -1;		// fd for /dev/i2c-{0,1}
 
 static uint8_t *disp_buf;
@@ -42,6 +43,7 @@ static int oled_i2c_open(const char *dev, int i2c_addr)
   if(ioctl(fd, I2C_SLAVE, i2c_addr) < 0){
     PyErr_Format(OledErr,"set slave addr:%02x error",i2c_addr);
   }
+  oled_opened = 1;
   return 1;
 }
 
@@ -49,6 +51,7 @@ static int oled_i2c_close(void)
 {
   if(fd >= 0)
     close(fd);
+  oled_opened = 0;
   return 1;
 }
 
@@ -359,6 +362,9 @@ oled_end_method(PyObject *self, PyObject *args, PyObject *keywds)
 {
   float timeout = DEFAULT_TIMEOUT;
   static char *kwlist[] = {"timeout",NULL};
+
+  if(!oled_opened)
+    return PyErr_Format(OledErr,"oled not opended, begin() first");
   
   if(!PyArg_ParseTupleAndKeywords(args, keywds, "|f", kwlist, &timeout))
     return NULL;
@@ -388,6 +394,10 @@ oled_clear_method(PyObject *self, PyObject *args, PyObject *keywds)
   int fill = 0;
   PyObject *area=NULL;
   static char *kwlist[] = {"update","sync","timeout","fill","area",NULL};
+
+  if(!oled_opened)
+    return PyErr_Format(OledErr,"oled not opended, begin() first");
+  
   if(!PyArg_ParseTupleAndKeywords(args, keywds,"|iifiO",kwlist,
                                   &update,&sync, &timeout, &fill, &area))
     return NULL;
@@ -436,6 +446,9 @@ oled_clear_method(PyObject *self, PyObject *args, PyObject *keywds)
 static PyObject *
 oled_image_method(PyObject *self, PyObject *args, PyObject *keywds)
 {
+  if(!oled_opened)
+    return PyErr_Format(OledErr,"oled not opended, begin() first");
+
   static char *kwlist[] = {"image","dst_area","src_area",
                            "update","sync","timeout",
                            NULL};
@@ -544,13 +557,16 @@ oled_image_method(PyObject *self, PyObject *args, PyObject *keywds)
     }
   }
   
- end:  
+ end:
   Py_RETURN_NONE;
 }
 
 static PyObject *
 oled_shift_method(PyObject *self, PyObject *args, PyObject *keywds)
 {
+  if(!oled_opened)
+    return PyErr_Format(OledErr,"oled not opended, begin() first");
+  
   static char *kwlist[] = {"amount","area","fill","update","sync","timeout",
                            NULL};
   PyObject *amount = NULL;
@@ -588,7 +604,7 @@ oled_shift_method(PyObject *self, PyObject *args, PyObject *keywds)
 
   if(sx != 0) oled_shift_left(x, y, x+w, y+h, -sx, fill);
   if(sy != 0) oled_shift_down(x, y, x+w, y+h, sy, fill);
-  
+
   if(update && (sx !=0 || sy != 0)){
     buf_modified = 1;
     pthread_cond_broadcast(&cond_modified); // signal to write_thread
@@ -597,6 +613,7 @@ oled_shift_method(PyObject *self, PyObject *args, PyObject *keywds)
         return NULL;
     }
   }
+
   Py_RETURN_NONE;
 }
 
@@ -605,6 +622,10 @@ oled_vsync_method(PyObject *self, PyObject *args, PyObject *keywds)
 {
   float timeout = DEFAULT_TIMEOUT;
   static char *kwlist[] = {"timeout", NULL};
+
+  if(!oled_opened)
+    return PyErr_Format(OledErr,"oled not opended, begin() first");
+  
   if(!PyArg_ParseTupleAndKeywords(args, keywds, "|f",kwlist, &timeout))
     return NULL;
   if(!wait_update(timeout))
@@ -638,7 +659,7 @@ static struct PyModuleDef oled_module = {
 };
 
 PyMODINIT_FUNC
-PyInit_raspioled(void)
+PyInit_oled(void)
 {
   PyObject *m = PyModule_Create(&oled_module);
 
@@ -654,9 +675,9 @@ PyInit_raspioled(void)
 }
 #else
 PyMODINIT_FUNC
-initraspioled(void)
+initoled(void) 
 {
-  PyObject *m = Py_InitModule("raspioled", OledMethods);
+  PyObject *m = Py_InitModule("oled", OledMethods);
   if(!m) return;
   
   OledErr = PyErr_NewException("raspioled.error", NULL, NULL);
