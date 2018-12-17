@@ -19,10 +19,8 @@ Adafruit_SSD1306の描画速度が遅いのが不満で作成しました。
 
     #!/usr/bin/python
 
-    import raspioled as oled;
-    from PIL import Image
-    from PIL import ImageDraw
-    from PIL import ImageFont
+    from RaspiOled import oled
+    from PIL import Image,ImageDraw,ImageFont
 
     image = Image.new('1',oled.size)  # make 128x64 bitmap image
     draw  = ImageDraw.Draw(image)
@@ -31,7 +29,7 @@ Adafruit_SSD1306の描画速度が遅いのが不満で作成しました。
         size=40)
     draw.text((0,0), "Hello", font=font, fill=255)
     oled.begin()
-    oled.image_bytes(image.tobytes())
+    oled.image(image)
 
 
 ## インストール方法
@@ -39,10 +37,17 @@ Adafruit_SSD1306の描画速度が遅いのが不満で作成しました。
 python2 で使用する場合
 
     $ sudo python setup.py install
-    
+    $ sudo pip install Pillow
 python3 で使用する場合
 
     $ sudo python3 setup.py install
+    $ sudo pip3 install Pillow
+
+## 使用例
+
+examples以下にサンプルのプログラムを用意していますので、参考にして下さい。
+
+サンプルプログラム実行時、必要なライブラリがあれば、適宜　pip等でインストールして下さい。
 
 ## I2Cの速度を400kHzにする
 
@@ -110,11 +115,28 @@ wとhが指定されない場合、可能な最大幅が指定されたものと
 
 update,sync, timeout引数は clearメソッドと同じです。
 
+**shift(amount=(-1,0),area=(0,0,128,64),fill=0,update=1,sync=0,timeout=0.5)**
+
+oled上の指定された領域を指定された量だけ平行移動させます。  
+
+amountは移動量をx成分とy成分でしていします。
+デフォルトは(-1,0)で左に1ドット移動させます。
+
+areaはシフトさせる領域を指定します。
+形式は (x,y,w,h)か((x,y)(w,h))のいずれかです。
+指定がなければ、画面全体を移動させます。
+
+fillは、移動の結果できた隙間を塗りつぶす色(0 or 1)を指定します。
+
+update, sync, timeoutは clearメソッドと同じです。
+
+
 **vsync(timeout=0.5)**
 
 clear, image_bytes メソッド後のoledへのデータのデータ転送を待ちます。  
 データ転送が行わなれていなければ、すぐに返ります。  
 timeoutは clearコマンドと同じです。
+
 
 
 
