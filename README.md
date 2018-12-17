@@ -1,6 +1,9 @@
 # raspioled
 pythin library for 128 x 64 dot OLED display connected to Raspberry Pi via i2c
 
+<a href="https://github.com/h-nari/raspioled/wiki/images/181217a0.jpg">
+<img src="https://github.com/h-nari/raspioled/wiki/images/181217a0.jpg" width="240"></a>
+
 ラズベリーパイに１I2Cで接続された 128 x 64ドットのOLED (コントローラはSSD1306)用の
 Pythonのライブラリです。
 
