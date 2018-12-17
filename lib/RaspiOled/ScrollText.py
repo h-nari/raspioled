@@ -1,18 +1,23 @@
 #!/usr/bin/python3
 import time
-import RaspiOled.oled as oled;
+from RaspiOled import oled,log
 from PIL import Image
 from PIL import ImageDraw
 from PIL import ImageFont
 
 class new:
 
-    def __init__(self):
-        self.dot_per_second = 128.0
-        self.area = ((0,0), oled.size)
+    def __init__(self,
+                 area=((0,0),(128,64)),
+                 font='/usr/share/fonts/trutype/noto/NotoMono-Regular.ttf',
+                 size=16,
+                 speed = 128
+    ):
+        self.dot_per_second = speed
+        self.area = area
         self.text = ""
-        self.font_size = 16
-        self.font_path = '/usr/share/fonts/trutype/noto/NotoMono-Regular.ttf'
+        self.font_size = size
+        self.font_path = font
         self.font=ImageFont.truetype(font=self.font_path,size=self.font_size);
         self.image = Image.new('1',(64,64)) 
         self.draw  = ImageDraw.Draw(self.image)
@@ -90,6 +95,6 @@ class new:
             return 0
         else:
             dot = int((time.time() - self.time) * self.dot_per_second);
-            self.time += dot / self.dot_per_second
+            self.time += float(dot) / self.dot_per_second
             return dot
         

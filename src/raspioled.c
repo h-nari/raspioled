@@ -514,10 +514,12 @@ oled_image_method(PyObject *self, PyObject *args, PyObject *keywds)
 
   // parse dst_area
   if(dst_area){
-    if(!PyArg_ParseTuple(dst_area,"ii|ii", &dst_x, &dst_y, &dst_w, &dst_h) &&
-       !PyArg_ParseTuple(dst_area,"(ii)(ii)", &dst_x, &dst_y, &dst_w, &dst_h))
-      return PyErr_Format(OledErr,
-                          "dst_area must be (x,y),(x,y,w,h)or((x,y),(w,h))");
+    if(!PyArg_ParseTuple(dst_area,"ii|ii", &dst_x, &dst_y, &dst_w, &dst_h)){
+      PyErr_Clear();
+      if(!PyArg_ParseTuple(dst_area,"(ii)(ii)", &dst_x,&dst_y,&dst_w,&dst_h))
+        return PyErr_Format(OledErr,
+                            "dst_area must be (x,y),(x,y,w,h)or((x,y),(w,h))");
+    }
   }
   if(dst_x >= w || dst_y >= h || dst_w <= 0 || dst_h <= 0)    goto end;
   if(dst_x < 0){ dst_w += dst_x; dst_x = 0;}
@@ -527,10 +529,13 @@ oled_image_method(PyObject *self, PyObject *args, PyObject *keywds)
   
   // parse src_area
   if(src_area){
-    if(!PyArg_ParseTuple(src_area,"ii|ii",&src_x,&src_y,&src_w,&src_h) &&
-       !PyArg_ParseTuple(src_area,"(ii)(ii)",&src_x,&src_y,&src_w,&src_h))
-      return PyErr_Format(OledErr,
-                          "src_area must be (x,y),(x,y,w,h)or((x,y),(w,h))");
+    if(!PyArg_ParseTuple(src_area,"ii|ii",&src_x,&src_y,&src_w,&src_h)){
+      PyErr_Clear();
+      if(!PyArg_ParseTuple(src_area,"(ii)(ii)",&src_x,&src_y,&src_w,&src_h)){
+        return PyErr_Format(OledErr,
+                            "src_area must be (x,y),(x,y,w,h)or((x,y),(w,h))");
+      }
+    }
   }
 
   if(src_x >= image_w || src_y >= image_h || src_w <= 0 || src_h <= 0)
