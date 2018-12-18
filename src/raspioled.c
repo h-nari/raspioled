@@ -7,8 +7,6 @@
 #include <linux/i2c-dev.h>
 #include <pthread.h>
 
-// #include <i2c/smbus.h>
-
 #define SSD1306_WIDTH	128
 #define SSD1306_HEIGHT	 64
 
@@ -164,7 +162,7 @@ void *oled_display_thread(void *user_data)
 static int  wait_update(float timeout_sec)
 {
   pthread_mutex_lock(&mutex_updating);
-  if(updating){
+  if(updating || buf_modified){
     int err;
     unsigned int ms; 
     struct timespec t,abstime;
